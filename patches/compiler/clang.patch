@@ -1,0 +1,12 @@
+diff --git a/lib/Driver/ToolChains/CommonArgs.cpp b/lib/Driver/ToolChains/CommonArgs.cpp
+index 9e6aeea958..e5f5d682e9 100644
+--- a/lib/Driver/ToolChains/CommonArgs.cpp
++++ b/lib/Driver/ToolChains/CommonArgs.cpp
+@@ -661,6 +661,7 @@ collectSanitizerRuntimes(const ToolChain &TC, const ArgList &Args,
+   if (SanArgs.needsSafeStackRt()) {
+     NonWholeStaticRuntimes.push_back("safestack");
+     RequiredSymbols.push_back("__safestack_init");
++    RequiredSymbols.push_back("init_nospec");
+   }
+   if (SanArgs.needsCfiRt())
+     StaticRuntimes.push_back("cfi");

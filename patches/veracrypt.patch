@@ -1,0 +1,49 @@
+diff --git a/src/Platform/Buffer.cpp b/src/Platform/Buffer.cpp
+index 7c61dc48..60c63faa 100644
+--- a/src/Platform/Buffer.cpp
++++ b/src/Platform/Buffer.cpp
+@@ -12,6 +12,7 @@
+ 
+ #include "Buffer.h"
+ #include "Exception.h"
++#include "context-light.h"
+ 
+ namespace VeraCrypt
+ {
+@@ -110,7 +111,12 @@ namespace VeraCrypt
+ 
+ 	SecureBuffer::SecureBuffer (size_t size, size_t alignment)
+ 	{
+-		Allocate (size, alignment);
++//         if(size < 4096) size = 4096;
++//         if(alignment < 4096) alignment = 4096;
++//         printf("Alloc %zd (%zd)\n", size, alignment);
++        Allocate (size, alignment);
++//         printf("NoSpec: %zx (len: %zd)\n", DataPtr, size);
++        nospec_set(DataPtr, size);
+ 	}
+ 
+ 	SecureBuffer::~SecureBuffer ()
+diff --git a/src/Platform/Platform.make b/src/Platform/Platform.make
+index 0a3c1435..248e5eca 100644
+--- a/src/Platform/Platform.make
++++ b/src/Platform/Platform.make
+@@ -35,5 +35,6 @@ OBJS += Unix/SystemInfo.o
+ OBJS += Unix/SystemLog.o
+ OBJS += Unix/Thread.o
+ OBJS += Unix/Time.o
++OBJS += context-light.o
+ 
+ include $(BUILD_INC)/Makefile.inc
+diff --git a/src/Volume/VolumePassword.cpp b/src/Volume/VolumePassword.cpp
+index a22c9388..822cd2d5 100644
+--- a/src/Volume/VolumePassword.cpp
++++ b/src/Volume/VolumePassword.cpp
+@@ -68,6 +68,7 @@ namespace VeraCrypt
+ 			throw PasswordTooLong (SRC_POS);
+ 
+ 		PasswordBuffer.Erase ();
++//         printf("Password: %s\n", password);
+ 		if (size > 0)
+ 			PasswordBuffer.CopyFrom (ConstBufferPtr (password, size));
+ 

@@ -1,0 +1,134 @@
+diff --git a/agent.c b/agent.c
+index e02a12d..69eee29 100644
+--- a/agent.c
++++ b/agent.c
+@@ -49,6 +49,7 @@
+ #include <sys/mman.h>
+ #include <errno.h>
+ #include <signal.h>
++#include "context-light.h"
+ #if (defined(__unix__) || defined(unix)) && !defined(USG)
+ #include <sys/param.h>
+ #endif
+@@ -315,8 +316,10 @@ bool agent_get_decryption_key(unsigned char key[KDF_HASH_LEN])
+ {
+ 	if (config_exists("plaintext_key")) {
+ 		_cleanup_free_ unsigned char *key_buffer = NULL;
++    nospec_secure_heap(1);
+ 		if (config_read_buffer("plaintext_key", &key_buffer) == KDF_HASH_LEN) {
+ 			_cleanup_free_ char *verify = config_read_encrypted_string("verify", (unsigned char *)key_buffer);
++      nospec_secure_heap(0);
+ 			if (!verify || strcmp(verify, AGENT_VERIFICATION_STRING))
+ 				goto badkey;
+ 			memcpy(key, key_buffer, KDF_HASH_LEN);
+@@ -325,6 +328,7 @@ bool agent_get_decryption_key(unsigned char key[KDF_HASH_LEN])
+ 			return true;
+ 		}
+ 		badkey: config_unlink("plaintext_key");
++    nospec_secure_heap(0);
+ 	}
+ 	if (!agent_ask(key)) {
+ 		if (!agent_load_key(key))
+diff --git a/cmd.c b/cmd.c
+index df76f5d..56473bd 100644
+--- a/cmd.c
++++ b/cmd.c
+@@ -42,6 +42,7 @@
+ #include <strings.h>
+ #include <string.h>
+ #include <regex.h>
++#include "context-light.h"
+ 
+ enum blobsync parse_sync_string(const char *syncstr)
+ {
+@@ -91,6 +92,7 @@ enum note_type parse_note_type_string(const char *extra)
+ 
+ void init_all(enum blobsync sync, unsigned char key[KDF_HASH_LEN], struct session **session, struct blob **blob)
+ {
++  nospec_set(key, KDF_HASH_LEN); // set the decryption key to uncacheable
+ 	if (!agent_get_decryption_key(key))
+ 		die("Could not find decryption key. Perhaps you need to login with `%s login`.", ARGV[0]);
+ 
+diff --git a/password.c b/password.c
+index eea4511..9bc4f93 100644
+--- a/password.c
++++ b/password.c
+@@ -46,7 +46,7 @@
+ #include <stdarg.h>
+ #include <errno.h>
+ #include <termios.h>
+-
++#include "context-light.h"
+ static char *password_prompt_askpass(const char *askpass, const char *prompt, const char *error, const char *descfmt, va_list params)
+ {
+ 	int status;
+@@ -84,10 +84,12 @@ static char *password_prompt_askpass(const char *askpass, const char *prompt, co
+ 	if (!output)
+ 		die_errno("fdopen");
+ 
++  nospec_secure_heap(1);
+ 	if (getline(&password, &len, output) < 0) {
+ 		free(password);
+ 		die("Unable to retrieve password from askpass (no reply)");
+ 	}
++  nospec_secure_heap(0);
+ 	lastlf = strrchr(password, '\n');
+ 	if (lastlf)
+ 		*lastlf = '\0';
+@@ -125,12 +127,14 @@ static char *password_prompt_fallback(const char *prompt, const char *error, con
+ 		if (tcsetattr(STDIN_FILENO, TCSANOW, &mask_echo) < 0)
+ 			die_errno("tcsetattr");
+ 	}
+-
++  nospec_secure_heap(1);
+ 	if (getline(&password, &len, stdin) < 0) {
+ 		free(password);
+ 		password = NULL;
++    nospec_secure_heap(0);
+ 		goto out;
+ 	}
++  nospec_secure_heap(0);
+ 	fprintf(stderr, "\n");
+ 	lastlf = strrchr(password, '\n');
+ 	if (lastlf)
+@@ -354,6 +358,7 @@ char *password_prompt(const char *prompt, const char *error, const char *descfmt
+ 
+ 	send("GETPIN", NULL);
+ 	total_len = 1;
++  nospec_secure_heap(1);
+ 	password = xcalloc(total_len, 1);
+ 	for (;;) {
+ 		nextline();
+@@ -373,6 +378,7 @@ char *password_prompt(const char *prompt, const char *error, const char *descfmt
+ 		}
+ 	}
+ 
++  nospec_secure_heap(0);
+ 	send("BYE", NULL);
+ 
+ 	#undef nextline
+@@ -385,11 +391,14 @@ char *password_prompt(const char *prompt, const char *error, const char *descfmt
+ 	if (len)
+ 		secure_clear(line, len);
+ 
++  nospec_secure_heap(1);
+ 	ret = pinentry_unescape(password);
++  nospec_secure_heap(0);
+ 	secure_clear_str(password);
+ 	return ret;
+ 
+ dead_pinentry:
++  nospec_secure_heap(0);
+ 	if (waitpid(child, &status, WNOHANG) <= 0) {
+ 		sleep(1);
+ 		if (waitpid(child, &status, WNOHANG) <= 0) {
+@@ -405,7 +414,9 @@ dead_pinentry:
+ 		return NULL;
+ 	else if (WEXITSTATUS(status) == 76) {
+ 		va_start(params, descfmt);
++    nospec_secure_heap(1);
+ 		password_fallback = password_prompt_fallback(prompt, error, descfmt, params);
++    nospec_secure_heap(0);
+ 		va_end(params);
+ 		return password_fallback;
+ 	} else

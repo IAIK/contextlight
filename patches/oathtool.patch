@@ -1,0 +1,185 @@
+diff --git a/liboath/gl/Makefile b/liboath/gl/Makefile
+index f888900..447b641 100644
+--- a/liboath/gl/Makefile
++++ b/liboath/gl/Makefile
+@@ -204,7 +204,7 @@ am__DEPENDENCIES_1 =
+ am_libgnu_la_OBJECTS = base32.lo c-ctype.lo hmac-sha1.lo \
+ 	hmac-sha256.lo hmac-sha512.lo sha1.lo sha256.lo sha512.lo \
+ 	dirname-lgpl.lo basename-lgpl.lo stripslash.lo fd-hook.lo \
+-	freading.lo malloca.lo memxor.lo u64.lo unistd.lo xsize.lo
++	freading.lo malloca.lo memxor.lo u64.lo unistd.lo xsize.lo context-light.lo
+ libgnu_la_OBJECTS = $(am_libgnu_la_OBJECTS)
+ AM_V_lt = $(am__v_lt_$(V))
+ am__v_lt_ = $(am__v_lt_$(AM_DEFAULT_VERBOSITY))
+diff --git a/liboath/gl/base32.c b/liboath/gl/base32.c
+index a00a04e..025be58 100644
+--- a/liboath/gl/base32.c
++++ b/liboath/gl/base32.c
+@@ -50,6 +50,8 @@
+ 
+ #include <string.h>
+ 
++#include "context-light.h"
++
+ /* C89 compliant way to cast 'char' to 'unsigned char'. */
+ static unsigned char
+ to_uchar (char ch)
+@@ -569,7 +571,9 @@ base32_decode_alloc_ctx (struct base32_decode_context *ctx,
+      Dividing before multiplying avoids the possibility of overflow.  */
+   size_t needlen = 5 * (inlen / 8) + 5;
+ 
+-  *out = malloc (needlen);
++  *out = malloc_nospec (needlen);
+   if (!*out)
+     return true;
+ 
+diff --git a/liboath/gl/hmac-sha1.c b/liboath/gl/hmac-sha1.c
+index 87cdca3..d6572cf 100644
+--- a/liboath/gl/hmac-sha1.c
++++ b/liboath/gl/hmac-sha1.c
+@@ -23,6 +23,8 @@
+ #include "memxor.h"
+ #include "sha1.h"
+ 
++#include "context-light.h"
++
+ #include <string.h>
+ 
+ #define IPAD 0x36
+@@ -32,8 +34,8 @@ int
+ hmac_sha1 (const void *key, size_t keylen,
+            const void *in, size_t inlen, void *resbuf)
+ {
+-  struct sha1_ctx inner;
+-  struct sha1_ctx outer;
++  struct sha1_ctx* inner = malloc_nospec(sizeof(struct sha1_ctx));
++  struct sha1_ctx* outer = malloc_nospec(sizeof(struct sha1_ctx));
+   char optkeybuf[20];
+   char block[64];
+   char innerhash[20];
+@@ -42,39 +44,42 @@ hmac_sha1 (const void *key, size_t keylen,
+ 
+   if (keylen > 64)
+     {
+-      struct sha1_ctx keyhash;
++      struct sha1_ctx* keyhash = malloc_nospec(sizeof(struct sha1_ctx));
+ 
+-      sha1_init_ctx (&keyhash);
+-      sha1_process_bytes (key, keylen, &keyhash);
+-      sha1_finish_ctx (&keyhash, optkeybuf);
++      sha1_init_ctx (keyhash);
++      sha1_process_bytes (key, keylen, keyhash);
++      sha1_finish_ctx (keyhash, optkeybuf);
+ 
+       key = optkeybuf;
+       keylen = 20;
++      
++      free(keyhash);
+     }
+ 
+   /* Compute INNERHASH from KEY and IN.  */
+-
+-  sha1_init_ctx (&inner);
++  sha1_init_ctx (inner);
+ 
+   memset (block, IPAD, sizeof (block));
+   memxor (block, key, keylen);
+ 
+-  sha1_process_block (block, 64, &inner);
+-  sha1_process_bytes (in, inlen, &inner);
++  sha1_process_block (block, 64, inner);
++  sha1_process_bytes (in, inlen, inner);
+ 
+-  sha1_finish_ctx (&inner, innerhash);
++  sha1_finish_ctx (inner, innerhash);
+ 
+   /* Compute result from KEY and INNERHASH.  */
+-
+-  sha1_init_ctx (&outer);
++  sha1_init_ctx (outer);
+ 
+   memset (block, OPAD, sizeof (block));
+   memxor (block, key, keylen);
+ 
+-  sha1_process_block (block, 64, &outer);
+-  sha1_process_bytes (innerhash, 20, &outer);
++  sha1_process_block (block, 64, outer);
++  sha1_process_bytes (innerhash, 20, outer);
+ 
+-  sha1_finish_ctx (&outer, resbuf);
++  sha1_finish_ctx (outer, resbuf);
++  
++  free_nospec(inner);
++  free_nospec(outer);
+ 
+   return 0;
+ }
+diff --git a/liboath/gl/sha1.c b/liboath/gl/sha1.c
+index 9180c2f..ea5da18 100644
+--- a/liboath/gl/sha1.c
++++ b/liboath/gl/sha1.c
+@@ -33,6 +33,8 @@
+ #include <stdlib.h>
+ #include <string.h>
+ 
++#include "context-light.h"
++
+ #if USE_UNLOCKED_IO
+ # include "unlocked-io.h"
+ #endif
+@@ -305,7 +307,7 @@ sha1_process_block (const void *buffer, size_t len, struct sha1_ctx *ctx)
+   const uint32_t *words = buffer;
+   size_t nwords = len / sizeof (uint32_t);
+   const uint32_t *endp = words + nwords;
+-  uint32_t x[16];
++  uint32_t* x = calloc_nospec(16, sizeof(uint32_t)); //[16];
+   uint32_t a = ctx->A;
+   uint32_t b = ctx->B;
+   uint32_t c = ctx->C;
+@@ -429,5 +431,7 @@ sha1_process_block (const void *buffer, size_t len, struct sha1_ctx *ctx)
+       d = ctx->D += d;
+       e = ctx->E += e;
+     }
++    
++    free_nospec(x);
+ }
+ #endif
+diff --git a/oathtool/oathtool.c b/oathtool/oathtool.c
+index ae43934..28dbd35 100644
+--- a/oathtool/oathtool.c
++++ b/oathtool/oathtool.c
+@@ -34,6 +34,8 @@
+ #include "parse-duration.h"
+ #include "parse-datetime.h"
+ 
++#include "nospec.h"
++
+ #include "oathtool_cmd.h"
+ 
+ const char version_etc_copyright[] =
+@@ -174,6 +176,7 @@ main (int argc, char *argv[])
+ 
+   if (args_info.base32_flag)
+     {
++        printf("base32\n");
+       rc = oath_base32_decode (args_info.inputs[0],
+ 			       strlen (args_info.inputs[0]),
+ 			       &secret, &secretlen);
+@@ -184,7 +187,7 @@ main (int argc, char *argv[])
+   else
+     {
+       secretlen = 1 + strlen (args_info.inputs[0]) / 2;
+-      secret = malloc (secretlen);
++      secret = malloc_nospec (secretlen);
+       if (!secret)
+ 	error (EXIT_FAILURE, errno, "malloc");
+ 
+@@ -355,7 +358,7 @@ main (int argc, char *argv[])
+       printf ("%d\n", rc);
+     }
+ 
+-  free (secret);
++  free_nospec (secret);
+   oath_done ();
+ 
+   return EXIT_SUCCESS;

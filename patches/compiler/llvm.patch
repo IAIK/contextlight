@@ -1,0 +1,168 @@
+diff --git a/lib/CodeGen/SafeStack.cpp b/lib/CodeGen/SafeStack.cpp
+index 7b1c7fe49e4..3a91d2e664a 100644
+--- a/lib/CodeGen/SafeStack.cpp
++++ b/lib/CodeGen/SafeStack.cpp
+@@ -378,6 +378,12 @@ Value *SafeStack::getStackGuard(IRBuilder<> &IRB, Function &F) {
+   return IRB.CreateLoad(StackGuardVar, "StackGuard");
+ }
+ 
++bool isFunctionArg(Function& F, AllocaInst* AI) {
++  // Allocas from function arguments are named <name>.addr
++  // Use this to identify function arguments
++  return AI->getName().endswith(".addr");
++}
++
+ void SafeStack::findInsts(Function &F,
+                           SmallVectorImpl<AllocaInst *> &StaticAllocas,
+                           SmallVectorImpl<AllocaInst *> &DynamicAllocas,
+@@ -388,9 +394,14 @@ void SafeStack::findInsts(Function &F,
+     if (auto AI = dyn_cast<AllocaInst>(&I)) {
+       ++NumAllocas;
+ 
+-      uint64_t Size = getStaticAllocaAllocationSize(AI);
+-      if (IsSafeStackAlloca(AI, Size))
++      if(isFunctionArg(F, AI)) {
++        LLVM_DEBUG(errs() << "[SafeStack]     Found function argument - not putting on unsafe stack\n");
+         continue;
++      }
++
++      // uint64_t Size = getStaticAllocaAllocationSize(AI);
++      // if (IsSafeStackAlloca(AI, Size))
++      //   continue;
+ 
+       if (AI->isStaticAlloca()) {
+         ++NumUnsafeStaticAllocas;
+@@ -414,17 +425,19 @@ void SafeStack::findInsts(Function &F,
+             "gcroot intrinsic not compatible with safestack attribute");
+     }
+   }
+-  for (Argument &Arg : F.args()) {
+-    if (!Arg.hasByValAttr())
+-      continue;
+-    uint64_t Size =
+-        DL.getTypeStoreSize(Arg.getType()->getPointerElementType());
+-    if (IsSafeStackAlloca(&Arg, Size))
+-      continue;
++  // for (Argument &Arg : F.args()) {
++  //   errs() << "ARG is ";
++  //   Arg.dump();
++  //   if (!Arg.hasByValAttr())
++  //     continue;
++  //   uint64_t Size =
++  //       DL.getTypeStoreSize(Arg.getType()->getPointerElementType());
++  //   if (IsSafeStackAlloca(&Arg, Size))
++  //     continue;
+ 
+-    ++NumUnsafeByValArguments;
+-    ByValArguments.push_back(&Arg);
+-  }
++  //   ++NumUnsafeByValArguments;
++  //   ByValArguments.push_back(&Arg);
++  // }
+ }
+ 
+ AllocaInst *
+@@ -509,17 +522,17 @@ Value *SafeStack::moveStaticAllocasToUnsafeStack(
+                   Align, SSC.getFullLiveRange());
+   }
+ 
+-  for (Argument *Arg : ByValArguments) {
+-    Type *Ty = Arg->getType()->getPointerElementType();
+-    uint64_t Size = DL.getTypeStoreSize(Ty);
+-    if (Size == 0)
+-      Size = 1; // Don't create zero-sized stack objects.
++  // for (Argument *Arg : ByValArguments) {
++  //   Type *Ty = Arg->getType()->getPointerElementType();
++  //   uint64_t Size = DL.getTypeStoreSize(Ty);
++  //   if (Size == 0)
++  //     Size = 1; // Don't create zero-sized stack objects.
+ 
+-    // Ensure the object is properly aligned.
+-    unsigned Align = std::max((unsigned)DL.getPrefTypeAlignment(Ty),
+-                              Arg->getParamAlignment());
+-    SSL.addObject(Arg, Size, Align, SSC.getFullLiveRange());
+-  }
++  //   // Ensure the object is properly aligned.
++  //   unsigned Align = std::max((unsigned)DL.getPrefTypeAlignment(Ty),
++  //                             Arg->getParamAlignment());
++  //   SSL.addObject(Arg, Size, Align, SSC.getFullLiveRange());
++  // }
+ 
+   for (AllocaInst *AI : StaticAllocas) {
+     Type *Ty = AI->getAllocatedType();
+@@ -563,27 +576,27 @@ Value *SafeStack::moveStaticAllocasToUnsafeStack(
+     StackGuardSlot->eraseFromParent();
+   }
+ 
+-  for (Argument *Arg : ByValArguments) {
+-    unsigned Offset = SSL.getObjectOffset(Arg);
+-    unsigned Align = SSL.getObjectAlignment(Arg);
+-    Type *Ty = Arg->getType()->getPointerElementType();
++  // for (Argument *Arg : ByValArguments) {
++  //   unsigned Offset = SSL.getObjectOffset(Arg);
++  //   unsigned Align = SSL.getObjectAlignment(Arg);
++  //   Type *Ty = Arg->getType()->getPointerElementType();
+ 
+-    uint64_t Size = DL.getTypeStoreSize(Ty);
+-    if (Size == 0)
+-      Size = 1; // Don't create zero-sized stack objects.
++  //   uint64_t Size = DL.getTypeStoreSize(Ty);
++  //   if (Size == 0)
++  //     Size = 1; // Don't create zero-sized stack objects.
+ 
+-    Value *Off = IRB.CreateGEP(BasePointer, // BasePointer is i8*
+-                               ConstantInt::get(Int32Ty, -Offset));
+-    Value *NewArg = IRB.CreateBitCast(Off, Arg->getType(),
+-                                     Arg->getName() + ".unsafe-byval");
++  //   Value *Off = IRB.CreateGEP(BasePointer, // BasePointer is i8*
++  //                              ConstantInt::get(Int32Ty, -Offset));
++  //   Value *NewArg = IRB.CreateBitCast(Off, Arg->getType(),
++  //                                    Arg->getName() + ".unsafe-byval");
+ 
+-    // Replace alloc with the new location.
+-    replaceDbgDeclare(Arg, BasePointer, BasePointer->getNextNode(), DIB,
+-                      DIExpression::NoDeref, -Offset, DIExpression::NoDeref);
+-    Arg->replaceAllUsesWith(NewArg);
+-    IRB.SetInsertPoint(cast<Instruction>(NewArg)->getNextNode());
+-    IRB.CreateMemCpy(Off, Align, Arg, Arg->getParamAlignment(), Size);
+-  }
++  //   // Replace alloc with the new location.
++  //   replaceDbgDeclare(Arg, BasePointer, BasePointer->getNextNode(), DIB,
++  //                     DIExpression::NoDeref, -Offset, DIExpression::NoDeref);
++  //   Arg->replaceAllUsesWith(NewArg);
++  //   IRB.SetInsertPoint(cast<Instruction>(NewArg)->getNextNode());
++  //   IRB.CreateMemCpy(Off, Align, Arg, Arg->getParamAlignment(), Size);
++  // }
+ 
+   // Allocate space for every unsafe static AllocaInst on the unsafe stack.
+   for (AllocaInst *AI : StaticAllocas) {
+@@ -801,18 +814,18 @@ bool SafeStack::run() {
+ 
+   AllocaInst *StackGuardSlot = nullptr;
+   // FIXME: implement weaker forms of stack protector.
+-  if (F.hasFnAttribute(Attribute::StackProtect) ||
+-      F.hasFnAttribute(Attribute::StackProtectStrong) ||
+-      F.hasFnAttribute(Attribute::StackProtectReq)) {
+-    Value *StackGuard = getStackGuard(IRB, F);
+-    StackGuardSlot = IRB.CreateAlloca(StackPtrTy, nullptr);
+-    IRB.CreateStore(StackGuard, StackGuardSlot);
++  // if (F.hasFnAttribute(Attribute::StackProtect) ||
++  //     F.hasFnAttribute(Attribute::StackProtectStrong) ||
++  //     F.hasFnAttribute(Attribute::StackProtectReq)) {
++  //   Value *StackGuard = getStackGuard(IRB, F);
++  //   StackGuardSlot = IRB.CreateAlloca(StackPtrTy, nullptr);
++  //   IRB.CreateStore(StackGuard, StackGuardSlot);
+ 
+-    for (ReturnInst *RI : Returns) {
+-      IRBuilder<> IRBRet(RI);
+-      checkStackGuard(IRBRet, F, *RI, StackGuardSlot, StackGuard);
+-    }
+-  }
++  //   for (ReturnInst *RI : Returns) {
++  //     IRBuilder<> IRBRet(RI);
++  //     checkStackGuard(IRBRet, F, *RI, StackGuardSlot, StackGuard);
++  //   }
++  // }
+ 
+   // The top of the unsafe stack after all unsafe static allocas are
+   // allocated.

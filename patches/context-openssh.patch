@@ -1,0 +1,123 @@
+diff --git a/ssh.c b/ssh.c
+index 12760af2..97953d2c 100644
+--- a/ssh.c
++++ b/ssh.c
+@@ -114,6 +114,8 @@
+ #include "ssh-pkcs11.h"
+ #endif
+ 
++#include "context-light.h"
++
+ extern char *__progname;
+ 
+ /* Saves a copy of argv for setproctitle emulation */
+@@ -182,7 +184,7 @@ static char uidstr[32], *host_arg, *conn_hash_hex;
+ struct sockaddr_storage hostaddr;
+ 
+ /* Private host keys. */
+-Sensitive sensitive_data;
++Sensitive nospec sensitive_data;
+ 
+ /* command to be executed */
+ struct sshbuf *command;
+@@ -1411,8 +1413,11 @@ main(int ac, char **av)
+ 	 * enabled, load the public keys so we can later use the ssh-keysign
+ 	 * helper to sign challenges.
+ 	 */
++    nospec_secure_heap(1);
++
+ 	sensitive_data.nkeys = 0;
+ 	sensitive_data.keys = NULL;
++    
+ 	if (options.hostbased_authentication) {
+ 		sensitive_data.nkeys = 10;
+ 		sensitive_data.keys = xcalloc(sensitive_data.nkeys,
+@@ -1541,6 +1546,7 @@ main(int ac, char **av)
+ 	/* Log into the remote system.  Never returns if the login fails. */
+ 	ssh_login(ssh, &sensitive_data, host, (struct sockaddr *)&hostaddr,
+ 	    options.port, pw, timeout_ms);
++    nospec_secure_heap(0);
+ 
+ 	if (ssh_packet_connection_is_on_socket(ssh)) {
+ 		verbose("Authenticated to %s ([%s]:%d).", host,
+diff --git a/sshbuf.c b/sshbuf.c
+index adfddf77..0d122bed 100644
+--- a/sshbuf.c
++++ b/sshbuf.c
+@@ -28,6 +28,8 @@
+ #include "sshbuf.h"
+ #include "misc.h"
+ 
++#include "context-light.h"
++
+ static inline int
+ sshbuf_check_sanity(const struct sshbuf *buf)
+ {
+@@ -70,15 +72,15 @@ sshbuf_new(void)
+ {
+ 	struct sshbuf *ret;
+ 
+-	if ((ret = calloc(sizeof(*ret), 1)) == NULL)
++	if ((ret = calloc_nospec(sizeof(*ret), 1)) == NULL)
+ 		return NULL;
+ 	ret->alloc = SSHBUF_SIZE_INIT;
+ 	ret->max_size = SSHBUF_SIZE_MAX;
+ 	ret->readonly = 0;
+ 	ret->refcount = 1;
+ 	ret->parent = NULL;
+-	if ((ret->cd = ret->d = calloc(1, ret->alloc)) == NULL) {
+-		free(ret);
++	if ((ret->cd = ret->d = calloc_nospec(1, ret->alloc)) == NULL) {
++		free_nospec(ret);
+ 		return NULL;
+ 	}
+ 	return ret;
+@@ -90,7 +92,7 @@ sshbuf_from(const void *blob, size_t len)
+ 	struct sshbuf *ret;
+ 
+ 	if (blob == NULL || len > SSHBUF_SIZE_MAX ||
+-	    (ret = calloc(sizeof(*ret), 1)) == NULL)
++	    (ret = calloc_nospec(sizeof(*ret), 1)) == NULL)
+ 		return NULL;
+ 	ret->alloc = ret->size = ret->max_size = len;
+ 	ret->readonly = 1;
+@@ -162,10 +164,10 @@ sshbuf_free(struct sshbuf *buf)
+ 
+ 	if (!buf->readonly) {
+ 		explicit_bzero(buf->d, buf->alloc);
+-		free(buf->d);
++		free_nospec(buf->d);
+ 	}
+ 	explicit_bzero(buf, sizeof(*buf));
+-	free(buf);
++	free_nospec(buf);
+ }
+ 
+ void
+@@ -181,7 +183,7 @@ sshbuf_reset(struct sshbuf *buf)
+ 	(void) sshbuf_check_sanity(buf);
+ 	buf->off = buf->size = 0;
+ 	if (buf->alloc != SSHBUF_SIZE_INIT) {
+-		if ((d = recallocarray(buf->d, buf->alloc, SSHBUF_SIZE_INIT,
++		if ((d = recallocarray_nospec(buf->d, buf->alloc, SSHBUF_SIZE_INIT,
+ 		    1)) != NULL) {
+ 			buf->cd = buf->d = d;
+ 			buf->alloc = SSHBUF_SIZE_INIT;
+@@ -240,7 +242,7 @@ sshbuf_set_max_size(struct sshbuf *buf, size_t max_size)
+ 		if (rlen > max_size)
+ 			rlen = max_size;
+ 		SSHBUF_DBG(("new alloc = %zu", rlen));
+-		if ((dp = recallocarray(buf->d, buf->alloc, rlen, 1)) == NULL)
++		if ((dp = recallocarray_nospec(buf->d, buf->alloc, rlen, 1)) == NULL)
+ 			return SSH_ERR_ALLOC_FAIL;
+ 		buf->cd = buf->d = dp;
+ 		buf->alloc = rlen;
+@@ -329,7 +331,7 @@ sshbuf_allocate(struct sshbuf *buf, size_t len)
+ 	if (rlen > buf->max_size)
+ 		rlen = buf->alloc + need;
+ 	SSHBUF_DBG(("adjusted rlen %zu", rlen));
+-	if ((dp = recallocarray(buf->d, buf->alloc, rlen, 1)) == NULL) {
++	if ((dp = recallocarray_nospec(buf->d, buf->alloc, rlen, 1)) == NULL) {
+ 		SSHBUF_DBG(("realloc fail"));
+ 		return SSH_ERR_ALLOC_FAIL;
+ 	}

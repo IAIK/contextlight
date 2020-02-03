@@ -1,0 +1,236 @@
+diff --git a/arch/x86/entry/calling.h b/arch/x86/entry/calling.h
+index 352e70cd33e80..30b0e8ace2ce0 100644
+--- a/arch/x86/entry/calling.h
++++ b/arch/x86/entry/calling.h
+@@ -67,35 +67,36 @@ For 32-bit we have the following conventions - kernel is built with
+  * C ABI says these regs are callee-preserved. They aren't saved on kernel entry
+  * unless syscall needs a complete, fully filled "struct pt_regs".
+  */
+-#define R15		0*8
+-#define R14		1*8
+-#define R13		2*8
+-#define R12		3*8
+-#define RBP		4*8
+-#define RBX		5*8
++#define SECURE		0*8
++#define R15		1*8
++#define R14		2*8
++#define R13		3*8
++#define R12		4*8
++#define RBP		5*8
++#define RBX		6*8
+ /* These regs are callee-clobbered. Always saved on kernel entry. */
+-#define R11		6*8
+-#define R10		7*8
+-#define R9		8*8
+-#define R8		9*8
+-#define RAX		10*8
+-#define RCX		11*8
+-#define RDX		12*8
+-#define RSI		13*8
+-#define RDI		14*8
++#define R11		7*8
++#define R10		8*8
++#define R9		9*8
++#define R8		10*8
++#define RAX		11*8
++#define RCX		12*8
++#define RDX		13*8
++#define RSI		14*8
++#define RDI		15*8
+ /*
+  * On syscall entry, this is syscall#. On CPU exception, this is error code.
+  * On hw interrupt, it's IRQ number:
+  */
+-#define ORIG_RAX	15*8
++#define ORIG_RAX	16*8
+ /* Return frame for iretq */
+-#define RIP		16*8
+-#define CS		17*8
+-#define EFLAGS		18*8
+-#define RSP		19*8
+-#define SS		20*8
++#define RIP		17*8
++#define CS		18*8
++#define EFLAGS		19*8
++#define RSP		20*8
++#define SS		21*8
+ 
+-#define SIZEOF_PTREGS	21*8
++#define SIZEOF_PTREGS	22*8
+ 
+ .macro PUSH_AND_CLEAR_REGS rdx=%rdx rax=%rax save_ret=0
+ 	/*
+@@ -138,6 +139,13 @@ For 32-bit we have the following conventions - kernel is built with
+ 	xorl	%r14d, %r14d	/* nospec   r14*/
+ 	pushq	%r15		/* pt_regs->r15 */
+ 	xorl	%r15d, %r15d	/* nospec   r15*/
++
++	movq	%rax, %r8
++	movl	$MSR_NTR, %ecx
++	rdmsr
++	pushq	%rax		/* pt_regs->secure */
++	movq	%r8, %rax
++
+ 	UNWIND_HINT_REGS
+ 	.if \save_ret
+ 	pushq	%rsi		/* return address on top of stack */
+@@ -145,6 +153,17 @@ For 32-bit we have the following conventions - kernel is built with
+ .endm
+ 
+ .macro POP_REGS pop_rdi=1 skip_r11rcx=0
++	popq %rax
++	xorl %edx, %edx
++	.if \skip_r11rcx
++	movq %rcx, %r15
++	.endif
++	movl $MSR_NTR, %ecx
++	wrmsr
++	.if \skip_r11rcx
++	movq %r15, %rcx
++	.endif
++
+ 	popq %r15
+ 	popq %r14
+ 	popq %r13
+diff --git a/arch/x86/entry/entry_64_compat.S b/arch/x86/entry/entry_64_compat.S
+index 7d0df78db7272..364e3da467150 100644
+--- a/arch/x86/entry/entry_64_compat.S
++++ b/arch/x86/entry/entry_64_compat.S
+@@ -104,6 +104,7 @@ ENTRY(entry_SYSENTER_compat)
+ 	xorl	%r14d, %r14d		/* nospec   r14 */
+ 	pushq   $0			/* pt_regs->r15 = 0 */
+ 	xorl	%r15d, %r15d		/* nospec   r15 */
++	pushq   $0			/* pt_regs->secure = 0 */
+ 	cld
+ 
+ 	/*
+@@ -246,6 +247,7 @@ GLOBAL(entry_SYSCALL_compat_after_hwframe)
+ 	xorl	%r14d, %r14d		/* nospec   r14 */
+ 	pushq   $0			/* pt_regs->r15 = 0 */
+ 	xorl	%r15d, %r15d		/* nospec   r15 */
++	pushq   $0			/* pt_regs->secure = 0 */
+ 
+ 	/*
+ 	 * User mode is traced as though IRQs are on, and SYSENTER
+@@ -394,6 +396,7 @@ ENTRY(entry_INT80_compat)
+ 	xorl	%r14d, %r14d		/* nospec   r14 */
+ 	pushq   %r15                    /* pt_regs->r15 */
+ 	xorl	%r15d, %r15d		/* nospec   r15 */
++	pushq	$0			/* pt_regs->secure (todo?) */
+ 	cld
+ 
+ 	/*
+diff --git a/arch/x86/include/asm/msr-index.h b/arch/x86/include/asm/msr-index.h
+index 68b2c3150de15..d2151fd8e04ad 100644
+--- a/arch/x86/include/asm/msr-index.h
++++ b/arch/x86/include/asm/msr-index.h
+@@ -19,6 +19,7 @@
+ #define MSR_GS_BASE		0xc0000101 /* 64bit GS base */
+ #define MSR_KERNEL_GS_BASE	0xc0000102 /* SwapGS GS shadow */
+ #define MSR_TSC_AUX		0xc0000103 /* Auxiliary TSC */
++#define MSR_NTR			12345 /* SPECFENSE secure MSR */
+ 
+ /* EFER bits: */
+ #define _EFER_SCE		0  /* SYSCALL/SYSRET */
+diff --git a/arch/x86/include/asm/pgtable_types.h b/arch/x86/include/asm/pgtable_types.h
+index 99fff853c9444..7a76717ebf752 100644
+--- a/arch/x86/include/asm/pgtable_types.h
++++ b/arch/x86/include/asm/pgtable_types.h
+@@ -20,7 +20,7 @@
+ #define _PAGE_BIT_PAT		7	/* on 4KB pages */
+ #define _PAGE_BIT_GLOBAL	8	/* Global TLB entry PPro+ */
+ #define _PAGE_BIT_SOFTW1	9	/* available for programmer */
+-#define _PAGE_BIT_SOFTW2	10	/* " */
++#define _PAGE_BIT_SOFTW2	10	/* specfense secure bit */
+ #define _PAGE_BIT_SOFTW3	11	/* " */
+ #define _PAGE_BIT_PAT_LARGE	12	/* On 2MB or 1GB pages */
+ #define _PAGE_BIT_SOFTW4	58	/* available for programmer */
+@@ -34,6 +34,7 @@
+ #define _PAGE_BIT_CPA_TEST	_PAGE_BIT_SOFTW1
+ #define _PAGE_BIT_SOFT_DIRTY	_PAGE_BIT_SOFTW3 /* software dirty tracking */
+ #define _PAGE_BIT_DEVMAP	_PAGE_BIT_SOFTW4
++#define _PAGE_BIT_SECURE	_PAGE_BIT_SOFTW2
+ 
+ /* If _PAGE_BIT_PRESENT is clear, we use these: */
+ /* - if the user mapped it with PROT_NONE; pte_present gives true */
+@@ -49,7 +50,7 @@
+ #define _PAGE_PSE	(_AT(pteval_t, 1) << _PAGE_BIT_PSE)
+ #define _PAGE_GLOBAL	(_AT(pteval_t, 1) << _PAGE_BIT_GLOBAL)
+ #define _PAGE_SOFTW1	(_AT(pteval_t, 1) << _PAGE_BIT_SOFTW1)
+-#define _PAGE_SOFTW2	(_AT(pteval_t, 1) << _PAGE_BIT_SOFTW2)
++#define _PAGE_SECURE	(_AT(pteval_t, 1) << _PAGE_BIT_SECURE)
+ #define _PAGE_PAT	(_AT(pteval_t, 1) << _PAGE_BIT_PAT)
+ #define _PAGE_PAT_LARGE (_AT(pteval_t, 1) << _PAGE_BIT_PAT_LARGE)
+ #define _PAGE_SPECIAL	(_AT(pteval_t, 1) << _PAGE_BIT_SPECIAL)
+diff --git a/arch/x86/include/asm/ptrace.h b/arch/x86/include/asm/ptrace.h
+index 6de1fd3d00974..61be2b87953d3 100644
+--- a/arch/x86/include/asm/ptrace.h
++++ b/arch/x86/include/asm/ptrace.h
+@@ -56,6 +56,7 @@ struct pt_regs {
+  * C ABI says these regs are callee-preserved. They aren't saved on kernel entry
+  * unless syscall needs a complete, fully filled "struct pt_regs".
+  */
++	unsigned long secure;
+ 	unsigned long r15;
+ 	unsigned long r14;
+ 	unsigned long r13;
+diff --git a/arch/x86/include/uapi/asm/ptrace.h b/arch/x86/include/uapi/asm/ptrace.h
+index 85165c0edafc8..9aa790f352221 100644
+--- a/arch/x86/include/uapi/asm/ptrace.h
++++ b/arch/x86/include/uapi/asm/ptrace.h
+@@ -46,6 +46,7 @@ struct pt_regs {
+  * C ABI says these regs are callee-preserved. They aren't saved on kernel entry
+  * unless syscall needs a complete, fully filled "struct pt_regs".
+  */
++	unsigned long secure;
+ 	unsigned long r15;
+ 	unsigned long r14;
+ 	unsigned long r13;
+diff --git a/arch/x86/kernel/asm-offsets_64.c b/arch/x86/kernel/asm-offsets_64.c
+index b2dcd161f5149..921ab8522acf6 100644
+--- a/arch/x86/kernel/asm-offsets_64.c
++++ b/arch/x86/kernel/asm-offsets_64.c
+@@ -50,6 +50,7 @@ int main(void)
+ 	ENTRY(r13);
+ 	ENTRY(r14);
+ 	ENTRY(r15);
++	ENTRY(secure);
+ 	ENTRY(flags);
+ 	BLANK();
+ #undef ENTRY
+diff --git a/arch/x86/kernel/head_64.S b/arch/x86/kernel/head_64.S
+index 8344dd2f310a4..61abd25db83b9 100644
+--- a/arch/x86/kernel/head_64.S
++++ b/arch/x86/kernel/head_64.S
+@@ -318,6 +318,7 @@ early_idt_handler_common:
+ 	pushq %r13				/* pt_regs->r13 */
+ 	pushq %r14				/* pt_regs->r14 */
+ 	pushq %r15				/* pt_regs->r15 */
++	pushq $0				/* pt_regs->secure (todo?) */
+ 	UNWIND_HINT_REGS
+ 
+ 	cmpq $14,%rsi		/* Page fault? */
+diff --git a/arch/x86/kernel/ptrace.c b/arch/x86/kernel/ptrace.c
+index e2ee403865ebe..464253911c5fc 100644
+--- a/arch/x86/kernel/ptrace.c
++++ b/arch/x86/kernel/ptrace.c
+@@ -62,6 +62,7 @@ struct pt_regs_offset {
+ 
+ static const struct pt_regs_offset regoffset_table[] = {
+ #ifdef CONFIG_X86_64
++	REG_OFFSET_NAME(secure),
+ 	REG_OFFSET_NAME(r15),
+ 	REG_OFFSET_NAME(r14),
+ 	REG_OFFSET_NAME(r13),
+@@ -248,8 +249,8 @@ static int set_segment_reg(struct task_struct *task,
+ 
+ static unsigned long *pt_regs_access(struct pt_regs *regs, unsigned long offset)
+ {
+-	BUILD_BUG_ON(offsetof(struct pt_regs, r15) != 0);
+-	return &regs->r15 + (offset / sizeof(regs->r15));
++	BUILD_BUG_ON(offsetof(struct pt_regs, secure) != 0);
++	return &regs->secure + (offset / sizeof(regs->secure));
+ }
+ 
+ static u16 get_segment_reg(struct task_struct *task, unsigned long offset) 

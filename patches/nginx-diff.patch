@@ -1,0 +1,79 @@
+diff --git a/auto/cc/gcc b/auto/cc/gcc
+index a5c5c18f..3ce3257a 100644
+--- a/auto/cc/gcc
++++ b/auto/cc/gcc
+@@ -166,7 +166,7 @@ esac
+ 
+ 
+ # stop on warning
+-CFLAGS="$CFLAGS -Werror"
++CFLAGS="$CFLAGS" # -Werror"
+ 
+ # debug
+ CFLAGS="$CFLAGS -g"
+diff --git a/auto/sources b/auto/sources
+index 3dad1113..abbed52c 100644
+--- a/auto/sources
++++ b/auto/sources
+@@ -41,7 +41,9 @@ CORE_DEPS="src/core/nginx.h \
+            src/core/ngx_open_file_cache.h \
+            src/core/ngx_crypt.h \
+            src/core/ngx_proxy_protocol.h \
+-           src/core/ngx_syslog.h"
++           src/core/ngx_syslog.h \
++           src/core/context-light.h \
++           src/core/ptedit_header.h"
+ 
+ 
+ CORE_SRCS="src/core/nginx.c \
+@@ -78,7 +80,8 @@ CORE_SRCS="src/core/nginx.c \
+            src/core/ngx_open_file_cache.c \
+            src/core/ngx_crypt.c \
+            src/core/ngx_proxy_protocol.c \
+-           src/core/ngx_syslog.c"
++           src/core/ngx_syslog.c \
++           src/core/context-light.c"
+ 
+ 
+ EVENT_MODULES="ngx_events_module ngx_event_core_module"
+diff --git a/src/event/ngx_event_openssl.c b/src/event/ngx_event_openssl.c
+index 91b415ca..2f73b63f 100644
+--- a/src/event/ngx_event_openssl.c
++++ b/src/event/ngx_event_openssl.c
+@@ -8,7 +8,7 @@
+ #include <ngx_config.h>
+ #include <ngx_core.h>
+ #include <ngx_event.h>
+-
++#include <context-light.h>
+ 
+ #define NGX_SSL_PASSWORD_BUFFER_SIZE  4096
+ 
+@@ -505,7 +505,7 @@ ngx_ssl_certificate(ngx_conf_t *cf, ngx_ssl_t *ssl, ngx_str_t *cert,
+     sk_X509_free(chain);
+     }
+ #endif
+-
++    nospec_secure_heap(1);
+     pkey = ngx_ssl_load_certificate_key(cf->pool, &err, key, passwords);
+     if (pkey == NULL) {
+         if (err != NULL) {
+@@ -514,6 +514,7 @@ ngx_ssl_certificate(ngx_conf_t *cf, ngx_ssl_t *ssl, ngx_str_t *cert,
+                           key->data, err);
+         }
+ 
++        nospec_secure_heap(0);
+         return NGX_ERROR;
+     }
+ 
+@@ -521,8 +522,10 @@ ngx_ssl_certificate(ngx_conf_t *cf, ngx_ssl_t *ssl, ngx_str_t *cert,
+         ngx_ssl_error(NGX_LOG_EMERG, ssl->log, 0,
+                       "SSL_CTX_use_PrivateKey(\"%s\") failed", key->data);
+         EVP_PKEY_free(pkey);
++        nospec_secure_heap(0);
+         return NGX_ERROR;
+     }
++    nospec_secure_heap(0);
+ 
+     EVP_PKEY_free(pkey);
+ 
